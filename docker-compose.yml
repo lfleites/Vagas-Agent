@@ -1,0 +1,9 @@
+services:
+  vagas-agent:
+    container_name: vagas_search_agent
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: "no"
