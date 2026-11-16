@@ -1,28 +1,86 @@
 import asyncio
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 import requests
 from playwright.async_api import async_playwright
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "SEU_TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "SEU_TELEGRAM_CHAT_ID")
 STATE_FILE = Path(os.getenv("STATE_FILE", "/app/data/sent_jobs.json"))
+FILTROS_FILE = Path(os.getenv("FILTROS_FILE", "/app/filtros.txt"))
 
-# Busca na Gupy
-SEARCH_TERM = os.getenv("SEARCH_TERM", "Suporte")
-WORKPLACE = os.getenv("WORKPLACE", "remote")  # remote | hybrid | on-site
+SECOES_OBRIGATORIOS = {"[obrigatorios]", "[obrigatórios]"}
+SECOES_EXCLUIDOS = {"[excluidos]", "[excluídos]"}
 
-# Filtros (separados por vírgula no .env)
-def _split_terms(raw: str) -> list[str]:
-    return [t.strip().lower() for t in raw.split(",") if t.strip()]
 
-TERMOS_OBRIGATORIOS = _split_terms(os.getenv("REQUIRED_TERMS", ""))
-TERMOS_EXCLUIDOS = _split_terms(os.getenv("EXCLUDED_TERMS", ""))
+def normalize(texto):
+    decomposicao = unicodedata.normalize("NFD", texto.lower())
+    return "".join(ch for ch in decomposicao if unicodedata.category(ch) != "Mn")
 
-MAX_ALERTS = int(os.getenv("MAX_ALERTS", "10"))
+
+def compile_termo(texto):
+    """Casa o termo ignorando acento e a vogal final de gênero (o/a, os/as)."""
+    normalizado = normalize(texto)
+    partes = []
+    for parte in re.split(r"(\s+)", normalizado):
+        if parte == "" or parte.isspace():
+            partes.append(re.escape(parte))
+            continue
+        if len(parte) >= 4 and parte.endswith(("os", "as")):
+            partes.append(re.escape(parte[:-2]) + r"(?:os|as)")
+        elif len(parte) >= 4 and parte.endswith(("o", "a")):
+            partes.append(re.escape(parte[:-1]) + r"[oa]")
+        else:
+            partes.append(re.escape(parte))
+    return texto, re.compile("".join(partes))
+
+
+def load_filtros(path):
+    if not path.is_file():
+        raise SystemExit(
+            f"Arquivo de filtros não encontrado: {path}\n"
+            "O arquivo filtros.txt precisa estar na pasta do projeto."
+        )
+
+    obrigatorios = []
+    excluidos = []
+    secao = None
+    for numero, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        header = raw.strip().lower()
+        if header in SECOES_OBRIGATORIOS:
+            secao = "obrigatorios"
+            continue
+        if header in SECOES_EXCLUIDOS:
+            secao = "excluidos"
+            continue
+        if secao is None:
+            raise SystemExit(f"Linha {numero} de {path} está fora de uma seção: {raw}")
+        termo = compile_termo(raw.lstrip(" \t"))
+        if secao == "obrigatorios":
+            obrigatorios.append(termo)
+        else:
+            excluidos.append(termo)
+
+    if not obrigatorios:
+        raise SystemExit(
+            f"Nenhum termo obrigatório em {path}. A busca foi interrompida."
+        )
+    return obrigatorios, excluidos
+
+
+def primeiro_termo(termos, titulo):
+    normalizado = normalize(titulo)
+    for texto, pattern in termos:
+        if pattern.search(normalizado):
+            return texto
+    return None
 
 
 def load_sent():
@@ -41,9 +99,9 @@ def save_sent(sent):
     )
 
 
-def send_telegram(text: str) -> bool:
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram não configurado (TELEGRAM_TOKEN / TELEGRAM_CHAT_ID).")
+def send_telegram(text):
+    if TELEGRAM_TOKEN in ("", "SEU_TELEGRAM_BOT_TOKEN"):
+        print("Telegram não configurado. Mensagem não enviada.")
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -67,40 +125,29 @@ def send_telegram(text: str) -> bool:
 
 async def buscar_vagas_gupy():
     print("🔍 Varrendo portal Gupy...")
-    url = (
-        f"https://portal.gupy.io/job-search/term={SEARCH_TERM}"
-        f"&workplaceTypes[]={WORKPLACE}"
-    )
-    print(f"URL: {url}")
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
+        url = "https://portal.gupy.io/job-search/term=Suporte&workplaceTypes[]=remote"
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_selector('a[href*="/job/"]', timeout=20000)
             await page.wait_for_timeout(2000)
             vagas = await page.eval_on_selector_all(
                 'a[href*="/job/"]',
-                """elements => elements.map(e => {
+                '''elements => elements.map(e => {
                     const lines = e.innerText.trim().split("\\n").map(s => s.trim()).filter(Boolean);
-                    const published = lines.find(l =>
-                        l.toLowerCase().includes("published") ||
-                        l.toLowerCase().includes("publicad")
-                    ) || "";
+                    const published = lines.find(l => l.toLowerCase().includes("published") || l.toLowerCase().includes("publicad")) || "";
                     return {
                         company: lines[0] || "",
                         title: lines[1] || lines[0] || "",
                         published: published,
                         link: e.href
                     };
-                }).filter(v => v.link && v.title)""",
+                }).filter(v => v.link && v.title)'''
             )
             seen = set()
             unicas = []
@@ -118,6 +165,11 @@ async def buscar_vagas_gupy():
 
 
 async def main():
+    obrigatorios, excluidos = load_filtros(FILTROS_FILE)
+    print(
+        f"Filtros: {len(obrigatorios)} obrigatórios, {len(excluidos)} excluídos "
+        f"({FILTROS_FILE})"
+    )
     print("🤖 Executando verificação do Agente...")
     vagas = await buscar_vagas_gupy()
     if not vagas:
@@ -128,36 +180,38 @@ async def main():
     novas = 0
 
     for vaga in vagas:
-        titulo = (vaga.get("title") or "").lower()
+        titulo = vaga.get("title") or ""
         link = vaga.get("link") or ""
 
         if not link or link in sent:
             continue
 
-        if TERMOS_OBRIGATORIOS and not any(t in titulo for t in TERMOS_OBRIGATORIOS):
+        if not primeiro_termo(obrigatorios, titulo):
             continue
 
-        if TERMOS_EXCLUIDOS and any(t in titulo for t in TERMOS_EXCLUIDOS):
-            print(f"Descartada: {vaga.get('title')}")
+        termo_excluido = primeiro_termo(excluidos, titulo)
+        if termo_excluido:
+            print(f"Descartada ({termo_excluido.strip()}): {titulo}")
             continue
 
         msg = (
             f"Nova vaga\n\n"
             f"Empresa: {vaga.get('company', '-')}\n"
-            f"Cargo: {vaga.get('title', '-')}\n"
+            f"Cargo: {titulo or '-'}\n"
             f"Publicacao: {vaga.get('published', '-')}\n"
             f"{link}"
         )
-        print(f"✅ Nova: {vaga.get('title')}")
-        if send_telegram(msg):
+        print(f"✅ Nova: {titulo}")
+        ok = send_telegram(msg)
+        if ok:
             sent[link] = {
-                "title": vaga.get("title"),
+                "title": titulo,
                 "company": vaga.get("company"),
                 "published": vaga.get("published"),
                 "sent_at": datetime.utcnow().isoformat(),
             }
             novas += 1
-        if novas >= MAX_ALERTS:
+        if novas >= 10:
             break
 
     save_sent(sent)

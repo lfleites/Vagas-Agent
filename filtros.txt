@@ -1,0 +1,61 @@
+# Filtros de vagas da Gupy
+#
+# Este arquivo é lido em toda execução. Edite, salve e rode de novo.
+# Não precisa reconstruir a imagem nem mexer no arquivo .env.
+#
+# Acentos são ignorados. Masculino e feminino contam como a mesma palavra.
+# Exemplo: estagiario também descarta estagiária, estagiário e estagiárias.
+#
+# A vaga precisa ter pelo menos um termo de [obrigatorios] no título.
+# Se o título tiver qualquer termo de [excluidos], ela é descartada.
+#
+# Linha em branco e linha que começa com # são ignoradas.
+# O espaço no final de "bi" e de "dev" é de propósito: sem ele, "bi"
+# entraria em palavras como "habitação", e "dev" em "devops".
+
+[obrigatorios]
+suporte
+service desk
+helpdesk
+help desk
+atendimento técnico
+atendimento tecnico
+técnico de suporte
+tecnico de suporte
+analista de suporte
+analista suporte
+n1
+n2
+sustentação
+sustentacao
+
+[excluidos]
+dados
+data
+bi 
+bi,
+mis
+power bi
+powerbi
+kpi
+dashboard
+etl
+sql
+oracle
+analista de dados
+analise de dados
+análise de dados
+especialista suporte atendimento
+rpa
+middleware
+desenvolvedor
+developer
+dev 
+qa
+design
+estágio
+estagio
+estagiário
+pj
+product owner
+scrum master

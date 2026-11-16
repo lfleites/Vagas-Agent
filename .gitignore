@@ -1,0 +1,9 @@
+.env
+data/
+backup/
+*.pdf
+comando de execução.txt
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

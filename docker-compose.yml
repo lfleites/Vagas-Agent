@@ -2,8 +2,12 @@ services:
   vagas-agent:
     container_name: vagas_search_agent
     build: .
-    env_file:
-      - .env
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     volumes:
       - ./data:/app/data
+      # Lidos da pasta do projeto a cada execução. Editar não pede rebuild.
+      - ./app.py:/app/app.py:ro
+      - ./filtros.txt:/app/filtros.txt:ro
     restart: "no"

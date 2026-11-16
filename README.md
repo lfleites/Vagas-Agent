@@ -2,113 +2,141 @@
 
 Agente leve que busca vagas no portal público da Gupy, filtra pelo título e envia alertas no Telegram.
 
-Não fica rodando o tempo todo: sobe, busca, envia e desliga. O agendamento é feito pelo cron do sistema.
+Não fica rodando o tempo todo: sobe, busca, envia e desliga. No Linux o agendamento é o cron. No Windows, o Agendador de Tarefas.
 
-Útil para quem quer ser um dos primeiros a se candidatar em vagas novas.
+A busca atual olha a primeira página de vagas remotas com o termo `Suporte`, na ordem da mais nova para a mais antiga. São cerca de 10 anúncios por execução. O `filtros.txt` decide quais desses títulos viram mensagem.
 
 ## Aviso
 
 Não exige login. A busca é feita na página pública da Gupy.
 
-Mesmo assim, evite intervalos muito curtos para reduzir o risco de bloqueio temporário de IP.  
-Recomendado: **5 horas** ou mais. Você também pode configurar uma execução ao ligar a máquina.
+Evite intervalos menores que 5 horas. Uma execução lê uma página de resultados e não abre o anúncio de cada vaga. Varrer muitas páginas, ou rodar de poucos em poucos minutos, aumenta o risco de bloqueio temporário de IP.
 
-Novas vagas costumam ser publicadas principalmente nestes horários:
-- Manhã: entre 8h e 11h
-- Início da tarde: entre 13h e 16h
-
-O autor não se responsabiliza por bloqueios ou violações dos Termos de Uso do site.
+O autor não se responsabiliza por bloqueios ou por violações dos Termos de Uso do site.
 
 ## Requisitos
 
-- Linux (testado em Debian)
-- Docker e Docker Compose
-- Bot do Telegram (grátis, via @BotFather)
+- Docker com Docker Compose (`docker compose`)
+- Linux ou Windows 10/11 de 64 bits
+- No Windows: Docker Desktop aberto, com o backend WSL2
+- Bot do Telegram, criado de graça com o [@BotFather](https://t.me/BotFather)
 
-## Instalação rápida
+## Instalação no Linux
 
 ```bash
 git clone https://github.com/lfleites/Vagas-Agent.git
-cd vagas-agent
+cd Vagas-Agent
 chmod +x install.sh
 ./install.sh
 ```
 
-O script pergunta token, chat ID, termo de busca e filtros, cria o `.env`, constrói a imagem e (opcionalmente) configura o cron.
+O script pede o token e o chat ID, grava o `.env` na pasta do projeto, constrói a imagem e, se você confirmar, agenda a execução a cada 5 horas e na inicialização.
+
+## Instalação no Windows
+
+1. Instale o [Docker Desktop](https://www.docker.com/products/docker-desktop/) e deixe ele aberto. Na primeira abertura, confirme o uso do WSL2.
+2. No Docker Desktop, ative a inicialização junto com o Windows. A tarefa agendada falha se o Docker estiver fechado.
+3. Clone o repositório e entre na pasta.
+4. Dê dois cliques em `install.bat`, ou rode no Prompt de Comando:
+
+```bat
+install.bat
+```
+
+O script pede o token e o chat ID, grava o `.env`, constrói a imagem e, se você confirmar, cria duas tarefas:
+
+- `Vagas-Agent`, a cada 5 horas
+- `Vagas-Agent-Logon`, cerca de 90 segundos depois do logon
+
+A primeira construção baixa o Chromium e pode levar alguns minutos.
 
 ## Configuração manual
 
 ```bash
 cp .env.example .env
-# Edite o .env
 mkdir -p data
 docker compose build
 docker compose run --rm vagas-agent
 ```
 
-### Variáveis do `.env`
+No Windows, a cópia do exemplo é `copy .env.example .env`. A pasta `data` pode ser criada com `mkdir data`.
 
-| Variável           | Descrição                                                         |
-|--------------------|-------------------------------------------------------------------|
-| `TELEGRAM_TOKEN`   | Token do bot (BotFather)                                          |
-| `TELEGRAM_CHAT_ID` | Seu chat ID                                                       |
-| `SEARCH_TERM`      | Termo de busca na Gupy (ex.: `Suporte`)                           |
-| `WORKPLACE`        | `remote`, `hybrid` ou `on-site`                                   |
-| `REQUIRED_TERMS`   | Termos que o título **deve** conter (vírgula). Vazio = não filtra |
-| `EXCLUDED_TERMS`   | Termos que **descartam** a vaga (vírgula). Vazio = não descarta   |
-| `MAX_ALERTS`       | Máximo de alertas por execução (padrão: 10)                       |
+O `.env` tem só o Telegram:
 
-## Como pegar o Chat ID
+```env
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+Os filtros de título não ficam mais no `.env`. Eles ficam em `filtros.txt`.
+
+### Como pegar o chat ID
 
 1. Crie o bot com o @BotFather (`/newbot`).
 2. Envie qualquer mensagem para o bot.
-3. Acesse no navegador:  
-   `https://api.telegram.org/bot<SEU_TOKEN>/getUpdates`
-4. Procure `"chat":{"id":123456789}` e use esse número.
+3. Abra no navegador `https://api.telegram.org/bot<SEU_TOKEN>/getUpdates`.
+4. Use o número que aparece em `"chat":{"id":123456789}`.
 
-## Agendamento (cron)
+## Filtros
 
-A cada 5 horas + na inicialização da máquina:
+`filtros.txt` é lido em toda execução. Salvar o arquivo basta. Não precisa reconstruir a imagem.
+
+- A vaga precisa ter pelo menos um termo de `[obrigatorios]` no título.
+- Se o título tiver qualquer termo de `[excluidos]`, ela é descartada.
+- Acento é ignorado. A vogal final de gênero também: `estagiario` casa com estagiário e estagiária.
+- Linha em branco e linha que começa com `#` são ignoradas.
+- O espaço no final de `bi` e de `dev` é de propósito. Sem ele, `bi` entraria em "habitação" e `dev` em "devops".
+
+O arquivo que vem no repositório é o perfil de suporte técnico, service desk e N1/N2, remoto. Troque os termos pela sua área. O filtro olha só o título.
+
+A URL da busca está em `app.py`, na função `buscar_vagas_gupy`:
+
+```text
+https://portal.gupy.io/job-search/term=Suporte&workplaceTypes[]=remote
+```
+
+`filtros.txt` não muda essa URL. Para outro cargo ou outro modelo de trabalho, edite essa linha. O `docker-compose.yml` monta o `app.py` e o `filtros.txt` da pasta do projeto, então essa edição também não pede rebuild.
+
+## Agendamento no Linux
 
 ```cron
-0 */5 * * * cd /caminho/para/vagas-agent && /usr/bin/docker compose run --rm vagas-agent >> /caminho/para/vagas-agent/data/cron.log 2>&1
-@reboot sleep 90 && cd /caminho/para/vagas-agent && /usr/bin/docker compose run --rm vagas-agent >> /caminho/para/vagas-agent/data/cron.log 2>&1
+0 */5 * * * cd /caminho/para/Vagas-Agent && docker compose run --rm vagas-agent >> /caminho/para/Vagas-Agent/data/cron.log 2>&1
+@reboot sleep 90 && cd /caminho/para/Vagas-Agent && docker compose run --rm vagas-agent >> /caminho/para/Vagas-Agent/data/cron.log 2>&1
 ```
 
-O `install.sh` pode configurar isso automaticamente.
+O `install.sh` grava essas linhas se você confirmar.
 
-## Como funciona o controle de “já enviado”
+## Agendamento no Windows
 
-- Cada link enviado é gravado em `data/sent_jobs.json`.
-- Na próxima execução, links já presentes no arquivo são ignorados.
-- Apagar a mensagem no Telegram **não** remove do arquivo.
-- Se a empresa republicar a vaga com um job ID novo, o link muda e o alerta é enviado de novo.
+O `install.bat` chama o `run.bat` pelo Agendador de Tarefas. Para criar na mão:
 
-## Sugestão de filtros (área de Suporte / Service Desk)
+1. Abra o Agendador de Tarefas.
+2. Crie uma tarefa que repete a cada 5 horas.
+3. Programa: o caminho completo de `run.bat`.
+4. Marque para executar só com o usuário logado. O Docker Desktop precisa estar aberto.
+5. Crie outra tarefa com o gatilho "Ao fazer logon", atrasada em 90 segundos, chamando o mesmo `run.bat`.
 
-Para quem atua em suporte técnico, Service Desk, N1/N2 (Windows, ServiceNow, Active Directory, remoto):
+## O que conta como vaga nova
 
-```env
-SEARCH_TERM=Suporte
-WORKPLACE=remote
-REQUIRED_TERMS=suporte,service desk,helpdesk,help desk,atendimento técnico,atendimento tecnico,técnico de suporte,tecnico de suporte,analista de suporte,analista suporte,n1,n2,sustentação,sustentacao
-EXCLUDED_TERMS=dados,data,bi ,bi,,mis,power bi,powerbi,kpi,dashboard,etl,sql,oracle,analista de dados,analise de dados,análise de dados,especialista suporte atendimento,rpa,middleware,desenvolvedor,developer,dev ,qa,design,estágio,estagio,estagiário,pj,product owner,scrum master
-```
+- Cada link enviado fica em `data/sent_jobs.json`.
+- A primeira execução cria esse arquivo. Ela avisa o que estiver na primeira página e passar no filtro, inclusive anúncio de dias anteriores.
+- Nas execuções seguintes, link já gravado é ignorado.
+- Apagar a mensagem no Telegram não apaga o arquivo.
+- Se a empresa republicar a vaga com outro identificador, o link muda e o alerta sai de novo.
 
-Ajuste conforme sua área. Os filtros olham apenas o **título** da vaga.
-
-## Comandos úteis
+## Comandos
 
 ```bash
-docker compose run --rm vagas-agent   # executar agora
-crontab -l                            # ver agendamento
-tail -f data/cron.log                 # logs das execuções automáticas
+docker compose run --rm vagas-agent
 ```
 
-## Segurança
+No Linux, `crontab -l` mostra a agenda e `tail -f data/cron.log` acompanha o log. No Windows, o log fica em `data\cron.log`.
 
-- Nunca commite o arquivo `.env` (já está no `.gitignore`).
-- Se o token vazar, revogue no @BotFather (`/revoke` ou gere um novo).
+## O que não vai para o GitHub
+
+O `.gitignore` deixa de fora o `.env`, a pasta `data`, a pasta `backup` e arquivos `.pdf`. Token, histórico de vagas e currículo ficam na máquina de quem usa.
+
+Se um token vazar, revogue no @BotFather e gere outro.
 
 ## Licença
 
