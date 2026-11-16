@@ -17,7 +17,7 @@ O autor não se responsabiliza por bloqueios ou por violações dos Termos de Us
 ## Requisitos
 
 - Docker com Docker Compose (`docker compose`)
-- Linux ou Windows 10/11 de 64 bits
+- Linux ou Windows 10/11 de 64 bits - Só foi testado no Debian até o momento
 - No Windows: Docker Desktop aberto, com o backend WSL2
 - Bot do Telegram, criado de graça com o [@BotFather](https://t.me/BotFather)
 
